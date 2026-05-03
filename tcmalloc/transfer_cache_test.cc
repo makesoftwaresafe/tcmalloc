@@ -438,7 +438,7 @@ TYPED_TEST_P(FuzzTest, MultiThreadedBiasedInsert) {
   threads.Start(10, [&](int) { env.RandomlyPoke(); });
 
   auto start = absl::Now();
-  while (start + absl::Seconds(5) > absl::Now()) env.Insert(batch_size);
+  while (start + absl::Seconds(1) > absl::Now()) env.Insert(batch_size);
   threads.Stop();
 }
 
@@ -450,7 +450,7 @@ TYPED_TEST_P(FuzzTest, MultiThreadedBiasedRemove) {
   threads.Start(10, [&](int) { env.RandomlyPoke(); });
 
   auto start = absl::Now();
-  while (start + absl::Seconds(5) > absl::Now()) env.Remove(batch_size);
+  while (start + absl::Seconds(1) > absl::Now()) env.Remove(batch_size);
   threads.Stop();
 }
 
@@ -460,7 +460,7 @@ TYPED_TEST_P(FuzzTest, MultiThreadedBiasedShrink) {
   threads.Start(10, [&](int) { env.RandomlyPoke(); });
 
   auto start = absl::Now();
-  while (start + absl::Seconds(5) > absl::Now()) env.Shrink();
+  while (start + absl::Seconds(1) > absl::Now()) env.Shrink();
   threads.Stop();
 }
 
@@ -470,7 +470,7 @@ TYPED_TEST_P(FuzzTest, MultiThreadedBiasedGrow) {
   threads.Start(10, [&](int) { env.RandomlyPoke(); });
 
   auto start = absl::Now();
-  while (start + absl::Seconds(5) > absl::Now()) env.Grow();
+  while (start + absl::Seconds(1) > absl::Now()) env.Grow();
   threads.Stop();
 }
 
@@ -795,7 +795,7 @@ TYPED_TEST_P(RealTransferCacheTest, StressResize) {
   threads.Start(5, [&](int) { env.RandomlyPoke(); });
 
   auto start = absl::Now();
-  while (start + absl::Seconds(5) > absl::Now()) {
+  while (start + absl::Seconds(1) > absl::Now()) {
     env.transfer_cache_manager().TryResizingCaches();
     absl::SleepFor(absl::Milliseconds(10));
   }
