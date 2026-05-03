@@ -19,14 +19,18 @@
 #include <cstring>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "gtest/gtest.h"
 #include "fuzztest/fuzztest.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "tcmalloc/common.h"
@@ -143,21 +147,164 @@ class MockCollapse final : public MemoryModifyFunction {
   }
 };
 
-void FuzzFiller(const std::string& s) {
-  const char* data = s.data();
-  size_t size = s.size();
+struct Allocate {
+  uint16_t length;
+  uint32_t num_objects;
+  bool density_dense;
 
-  // TODO(b/271282540):  Strongly type these parameters from fuzztest.
-  constexpr int kInitBytes = 3;
-  if (size <= kInitBytes || size > 100000) {
-    // size <= kInitBytes for needing some entropy to initialize the filler
-    // with.
-    //
-    // size > 100000 for avoiding overly large inputs given we do extra
-    // checking.
-    return;
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const Allocate& a) {
+    absl::Format(&sink,
+                 "Allocate{.length=%d, .num_objects=%d, .density_dense=%v}",
+                 a.length, a.num_objects, a.density_dense);
   }
+};
 
+struct Deallocate {
+  uint32_t tracker_index;
+  uint32_t alloc_index;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const Deallocate& d) {
+    absl::Format(&sink, "Deallocate{.tracker_index=%d, .alloc_index=%d}",
+                 d.tracker_index, d.alloc_index);
+  }
+};
+
+struct Release {
+  bool hit_limit;
+  bool use_peak_interval;
+  absl::Duration peak_interval;
+  absl::Duration short_interval;
+  absl::Duration long_interval;
+  uint16_t desired_pages;
+  bool release_partial_allocs;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const Release& r) {
+    absl::Format(
+        &sink,
+        "Release{.hit_limit=%v, .use_peak_interval=%v, .peak_interval=%v, "
+        ".short_interval=%v, .long_interval=%v, .desired_pages=%d, "
+        ".release_partial_allocs=%v}",
+        r.hit_limit, r.use_peak_interval, r.peak_interval, r.short_interval,
+        r.long_interval, r.desired_pages, r.release_partial_allocs);
+  }
+};
+
+struct AdvanceClock {
+  absl::Duration amount;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const AdvanceClock& a) {
+    absl::Format(&sink, "AdvanceClock{.amount=%v}", a.amount);
+  }
+};
+
+struct ToggleUnback {
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const ToggleUnback&) {
+    sink.Append("ToggleUnback");
+  }
+};
+
+struct GatherStats {
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const GatherStats&) {
+    sink.Append("GatherStats");
+  }
+};
+
+struct ModelTail {
+  uint16_t length;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const ModelTail& m) {
+    absl::Format(&sink, "ModelTail{.length=%d}", m.length);
+  }
+};
+
+struct MemoryLimitHitRelease {
+  uint16_t desired;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const MemoryLimitHitRelease& m) {
+    absl::Format(&sink, "MemoryLimitHitRelease{.desired=%d}", m.desired);
+  }
+};
+
+struct GatherStatsPbtxt {
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const GatherStatsPbtxt&) {
+    sink.Append("GatherStatsPbtxt");
+  }
+};
+
+struct GatherSpanStats {
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const GatherSpanStats&) {
+    sink.Append("GatherSpanStats");
+  }
+};
+
+struct TreatTrackers {
+  bool enable_collapse;
+  bool enable_release_free_swap;
+  bool use_userspace_collapse_heuristics;
+  bool enable_unfiltered_collapse;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const TreatTrackers& t) {
+    absl::Format(&sink, "TreatTrackers{...}");
+  }
+};
+
+struct UpdateBitmaps {
+  bool hugepage_backed_set;
+  bool hugepage_backed_val;
+  uint16_t unbacked_bitmap_val;
+  uint16_t swapped_bitmap_val;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const UpdateBitmaps& u) {
+    absl::Format(&sink, "UpdateBitmaps{...}");
+  }
+};
+
+struct ToggleCollapseSuccess {
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const ToggleCollapseSuccess&) {
+    sink.Append("ToggleCollapseSuccess");
+  }
+};
+
+struct SetErrorNumber {
+  uint8_t error_type;
+  uint32_t raw_value;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const SetErrorNumber& s) {
+    absl::Format(&sink, "SetErrorNumber{.error_type=%d}", s.error_type);
+  }
+};
+
+struct SetCollapseLatency {
+  absl::Duration latency;
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const SetCollapseLatency& s) {
+    absl::Format(&sink, "SetCollapseLatency{.latency=%v}", s.latency);
+  }
+};
+
+using Instruction =
+    std::variant<Allocate, Deallocate, Release, AdvanceClock, ToggleUnback,
+                 GatherStats, ModelTail, MemoryLimitHitRelease,
+                 GatherStatsPbtxt, GatherSpanStats, TreatTrackers,
+                 UpdateBitmaps, ToggleCollapseSuccess, SetErrorNumber,
+                 SetCollapseLatency>;
+
+void FuzzFiller(const std::vector<Instruction>& instructions) {
   // Reset global state.
   MockUnback unback;
   MockCollapse collapse;
@@ -166,29 +313,13 @@ void FuzzFiller(const std::string& s) {
   unback_success = true;
   absl::flat_hash_set<PageId>& released_set = ReleasedPages();
   released_set.clear();
-  // To avoid reentrancy during unback, reserve space in released_set.
-  // We have at most size/5 allocations, for at most kPagesPerHugePage pages
-  // each, that we can track the released status of.
+  // To avoid reentrancy during unback, reserve space in released_set.  We have
+  // at most instructions.size() allocations, for at most kPagesPerHugePage
+  // pages each, that we can track the released status of.
   //
   // TODO(b/73749855): Releasing the pageheap_lock during ReleaseFree will
   // eliminate the need for this.
-  released_set.reserve(kPagesPerHugePage.raw_num() * size / 5);
-
-  // We interpret data as a small DSL for exploring the state space of
-  // HugePageFiller.
-  //
-  // [0-2] - Reserved.
-  //
-  // Afterwards, we read 5 bytes at a time until the buffer is exhausted.
-  // [i + 0]        - Specifies an operation to perform on the filler (allocate,
-  //                  deallocate, release memory, gather stats, etc.)
-  // [i + 1, i + 4] - Specifies an integer.  We use this as a source of
-  //                  deterministic entropy to allow inputs to be replayed.
-  //                  For example, this input can provide a Length to
-  //                  allocate, or the index of the previous allocation to
-  //                  deallocate.
-  data += kInitBytes;
-  size -= kInitBytes;
+  released_set.reserve(kPagesPerHugePage.raw_num() * instructions.size());
 
   HugePageFiller<PageTracker> filler(Clock{.now = mock_clock, .freq = freq},
                                      MemoryTag::kNormal, unback, unback,
@@ -199,381 +330,279 @@ void FuzzFiller(const std::string& s) {
                       std::vector<std::pair<Range, SpanAllocInfo>>>
       allocs;
 
-  // Running counter to allocate pseudo-random addresses
   size_t next_hugepage = 1;
 
-  for (size_t i = 0; i + 5 <= size; i += 5) {
-    const uint8_t op = data[i];
-    uint32_t value;
-    memcpy(&value, &data[i + 1], sizeof(value));
+  for (const auto& inst : instructions) {
+    std::visit(
+        [&](auto&& arg) {
+          using T = std::decay_t<decltype(arg)>;
 
-    switch (op & 0xF) {
-      case 0: {
-        // Allocate.  We divide up our random value by:
-        //
-        // value[0:15]  - We choose a Length to allocate.
-        // value[16:31] - We select num_to_objects.
-        Length n(std::clamp<size_t>(value & 0xFFFF, 1,
-                                    kPagesPerHugePage.raw_num() - 1));
-        AccessDensityPrediction density;
-        const uint32_t lval = (value >> 16);
-        // Choose many objects if the last bit is 1.
-        if (lval & 1) {
-          density = AccessDensityPrediction::kDense;
-        } else {
-          // We need to choose few objects, so only top four bits are used.
-          density = AccessDensityPrediction::kSparse;
-        }
-        size_t num_objects = std::max<size_t>(lval >> 1, 1);
+          if constexpr (std::is_same_v<T, Allocate>) {
+            // Allocate.
+            // length: We choose a Length to allocate.
+            // num_objects: We select num_to_objects.
+            Length n(std::clamp<size_t>(arg.length, 1,
+                                        kPagesPerHugePage.raw_num() - 1));
+            size_t num_objects = std::max<size_t>(arg.num_objects, 1);
+            AccessDensityPrediction density =
+                arg.density_dense ? AccessDensityPrediction::kDense
+                                  : AccessDensityPrediction::kSparse;
+            // Truncate to single object for larger allocations. This ensures
+            // that we always allocate few-object spans from donations.
+            if (n > kPagesPerHugePage / 2) {
+              num_objects = 1;
+              density = AccessDensityPrediction::kSparse;
+            }
+            if (density == AccessDensityPrediction::kDense) {
+              n = Length(1);
+            }
+            SpanAllocInfo alloc_info = {.objects_per_span = num_objects,
+                                        .density = density};
+            absl::flat_hash_set<PageId>& released_set = ReleasedPages();
 
-        // Truncate to single object for larger allocations. This ensures that
-        // we always allocate few-object spans from donations.
-        if (n > kPagesPerHugePage / 2) {
-          num_objects = 1;
-          density = AccessDensityPrediction::kSparse;
-        }
-        if (density == AccessDensityPrediction::kDense) {
-          n = Length(1);
-        }
+            CHECK_EQ(filler.size().raw_num(), trackers.size());
+            CHECK_EQ(filler.unmapped_pages().raw_num(), released_set.size());
 
-        SpanAllocInfo alloc_info = {.objects_per_span = num_objects,
-                                    .density = density};
-        absl::flat_hash_set<PageId>& released_set = ReleasedPages();
+            HugePageFiller<PageTracker>::TryGetResult result;
+            {
+              PageHeapSpinLockHolder l;
+              result = filler.TryGet(n, alloc_info);
+            }
 
-        CHECK_EQ(filler.size().raw_num(), trackers.size());
-        CHECK_EQ(filler.unmapped_pages().raw_num(), released_set.size());
+            if (result.pt == nullptr) {
+              // Since small objects are likely to be found, we model those tail
+              // donations separately.
+              const bool donated = n > kPagesPerHugePage / 2;
+              result.pt = new PageTracker(HugePage{.pn = next_hugepage},
+                                          donated, fake_clock);
+              next_hugepage++;
+              {
+                PageHeapSpinLockHolder l;
+                result.page = result.pt->Get(n, alloc_info).page;
+                filler.Contribute(result.pt, donated, alloc_info);
+              }
+              trackers.push_back(result.pt);
+            }
 
-        HugePageFiller<PageTracker>::TryGetResult result;
-        {
-          PageHeapSpinLockHolder l;
-          result = filler.TryGet(n, alloc_info);
-        }
+            for (PageId p = result.page, end = p + n; p != end; ++p) {
+              released_set.erase(p);
+            }
 
-        if (result.pt == nullptr) {
-          // Failed to allocate.  Create a new huge page.
-          //
-          // Donated pages do not necessarily have to have a particular size,
-          // since this may be (kPagesPerHugePage/2,kPagesPerHugePage) in size
-          // *or* the tail of an allocation >PagesPerHugePage.
-          //
-          // Since small objects are likely to be found, we model those tail
-          // donations separately.
-          const bool donated = n > kPagesPerHugePage / 2;
-          result.pt = new PageTracker(HugePage{.pn = next_hugepage}, donated,
-                                      fake_clock);
-          next_hugepage++;
-          {
+            allocs[result.pt].push_back({{result.page, n}, alloc_info});
+
+            CHECK_EQ(filler.size().raw_num(), trackers.size());
+            CHECK_EQ(filler.unmapped_pages().raw_num(), released_set.size());
+          } else if constexpr (std::is_same_v<T, Deallocate>) {
+            // Deallocate.
+            // tracker_index: Index of the huge page (from trackers) to select
+            // alloc_index: Index of the allocation (on pt) to select
+            if (trackers.empty()) return;
+            const size_t lo = arg.tracker_index % trackers.size();
+            PageTracker* pt = trackers[lo];
+            CHECK(!allocs[pt].empty());
+            const size_t hi = arg.alloc_index % allocs[pt].size();
+            auto [alloc, alloc_info] = allocs[pt][hi];
+
+            std::swap(allocs[pt][hi], allocs[pt].back());
+            allocs[pt].resize(allocs[pt].size() - 1);
+            bool last_alloc = allocs[pt].empty();
+            if (last_alloc) {
+              allocs.erase(pt);
+              std::swap(trackers[lo], trackers.back());
+              trackers.resize(trackers.size() - 1);
+            }
+
+            PageTracker* ret;
+            {
+              PageHeapSpinLockHolder l;
+              ret = filler.Put(pt, alloc, alloc_info);
+            }
+            CHECK_EQ(ret != nullptr, last_alloc);
+            absl::flat_hash_set<PageId>& released_set = ReleasedPages();
+            if (ret) {
+              HugePage hp = ret->location();
+              for (PageId p = hp.first_page(),
+                          end = hp.first_page() + kPagesPerHugePage;
+                   p != end; ++p) {
+                released_set.erase(p);
+              }
+              delete ret;
+            }
+
+            CHECK_EQ(filler.size().raw_num(), trackers.size());
+            CHECK_EQ(filler.unmapped_pages().raw_num(), released_set.size());
+          } else if constexpr (std::is_same_v<T, Release>) {
+            // Release
+            // hit_limit: Whether are trying to apply TCMalloc's memory limits
+            // use_peak_interval: Whether using peak interval for skip
+            // subrelease peak_interval: Peak interval for skip subrelease (if
+            // using peak interval) short_interval: Short interval for skip
+            // subrelease (if not using peak interval) long_interval: Long
+            // interval for skip subrelease (if not using peak interval)
+            // desired_pages: Number of pages to try to release
+            // release_partial_allocs: Whether we release all free pages from
+            // partial allocs.
+            bool hit_limit = arg.hit_limit;
+            bool use_peak_interval = arg.use_peak_interval;
+            SkipSubreleaseIntervals skip_subrelease_intervals;
+            if (use_peak_interval) {
+              skip_subrelease_intervals.peak_interval = arg.peak_interval;
+            } else {
+              skip_subrelease_intervals.short_interval = arg.short_interval;
+              skip_subrelease_intervals.long_interval = arg.long_interval;
+              if (skip_subrelease_intervals.short_interval >
+                  skip_subrelease_intervals.long_interval) {
+                std::swap(skip_subrelease_intervals.short_interval,
+                          skip_subrelease_intervals.long_interval);
+              }
+            }
+            Length desired(arg.desired_pages);
+            const bool release_partial_allocs = arg.release_partial_allocs;
+            size_t to_release_from_partial_allocs;
+
+            Length released;
+            {
+              PageHeapSpinLockHolder l;
+              to_release_from_partial_allocs =
+                  HugePageFiller<PageTracker>::kPartialAllocPagesRelease *
+                  filler.FreePagesInPartialAllocs().raw_num();
+              released = filler.ReleasePages(desired, skip_subrelease_intervals,
+                                             release_partial_allocs, hit_limit);
+            }
+
+            if (release_partial_allocs && !hit_limit &&
+                !skip_subrelease_intervals.SkipSubreleaseEnabled() &&
+                unback_success) {
+              CHECK_GE(released.raw_num(), to_release_from_partial_allocs);
+            }
+          } else if constexpr (std::is_same_v<T, AdvanceClock>) {
+            // Advance clock
+            // amount: Advances clock by this amount in arbitrary units.
+            fake_clock += absl::ToInt64Nanoseconds(
+                std::min(arg.amount, absl::Seconds(1)));
+          } else if constexpr (std::is_same_v<T, ToggleUnback>) {
+            // Toggle unback, simulating madvise potentially failing or
+            // succeeding.
+            unback_success = !unback_success;
+          } else if constexpr (std::is_same_v<T, GatherStats>) {
+            // Gather stats
+            std::string s;
+            s.resize(1 << 20);
+            Printer p(&s[0], s.size());
+            FakePageFlags pageflags;
             PageHeapSpinLockHolder l;
+            filler.Print(p, true, pageflags);
+          } else if constexpr (std::is_same_v<T, ModelTail>) {
+            // Model a tail from a larger allocation.  The tail can have any
+            // size [1,kPagesPerHugePage).
+            //
+            // length: We choose a Length to allocate.
+            const Length n(std::clamp<size_t>(arg.length, 1,
+                                              kPagesPerHugePage.raw_num() - 1));
+            absl::flat_hash_set<PageId>& released_set = ReleasedPages();
 
-            result.page = result.pt->Get(n, alloc_info).page;
-            filler.Contribute(result.pt, donated, alloc_info);
+            auto* pt = new PageTracker(HugePage{.pn = next_hugepage},
+                                       /*was_donated=*/true, fake_clock);
+            next_hugepage++;
+            PageId start;
+            {
+              PageHeapSpinLockHolder l;
+              start = pt->Get(n, {1, AccessDensityPrediction::kSparse}).page;
+              filler.Contribute(pt, /*donated=*/true,
+                                {1, AccessDensityPrediction::kSparse});
+            }
+
+            trackers.push_back(pt);
+
+            for (PageId p = start, end = p + n; p != end; ++p) {
+              released_set.erase(p);
+            }
+
+            allocs[pt].push_back(
+                {{start, n}, {1, AccessDensityPrediction::kSparse}});
+
+            CHECK_EQ(filler.size().raw_num(), trackers.size());
+            CHECK_EQ(filler.unmapped_pages().raw_num(), released_set.size());
+          } else if constexpr (std::is_same_v<T, MemoryLimitHitRelease>) {
+            // Memory limit hit. Release.
+            // desired: Number of pages to try to release
+            Length desired(arg.desired);
+            Length released;
+            const Length free = filler.free_pages();
+            {
+              PageHeapSpinLockHolder l;
+              released = filler.ReleasePages(
+                  desired, SkipSubreleaseIntervals{},
+                  /*release_partial_alloc_pages=*/false, /*hit_limit=*/true);
+            }
+            const Length expected =
+                unback_success ? std::min(free, desired) : Length(0);
+            CHECK_GE(released.raw_num(), expected.raw_num());
+          } else if constexpr (std::is_same_v<T, GatherStatsPbtxt>) {
+            // Gather stats in pbtxt format.
+            std::string s;
+            s.resize(1 << 20);
+            Printer p(&s[0], s.size());
+            FakePageFlags pageflags;
+            {
+              PbtxtRegion region(p, kTop);
+              PageHeapSpinLockHolder l;
+              filler.PrintInPbtxt(region, pageflags);
+            }
+            CHECK_LE(p.SpaceRequired(), s.size());
+            s.resize(p.SpaceRequired());
+          } else if constexpr (std::is_same_v<T, GatherSpanStats>) {
+            // Gather span stats.
+            SmallSpanStats small;
+            LargeSpanStats large;
+            filler.AddSpanStats(&small, &large);
+          } else if constexpr (std::is_same_v<T, TreatTrackers>) {
+            FakePageFlags pageflags;
+            FakeResidency residency;
+            PageHeapSpinLockHolder l;
+            filler.TreatHugepageTrackers(
+                arg.enable_collapse, arg.enable_release_free_swap,
+                arg.use_userspace_collapse_heuristics,
+                arg.enable_unfiltered_collapse
+                    ? EnableUnfilteredCollapse::kEnabled
+                    : EnableUnfilteredCollapse::kDisabled,
+                &pageflags, &residency);
+            CHECK(filler.FetchFullyFreedTracker() == nullptr);
+          } else if constexpr (std::is_same_v<T, UpdateBitmaps>) {
+            if (arg.hugepage_backed_set) {
+              is_hugepage_backed = arg.hugepage_backed_val;
+            } else {
+              is_hugepage_backed = std::nullopt;
+            }
+            if (is_hugepage_backed.value_or(false)) {
+              unbacked_bitmap.Clear();
+              swapped_bitmap.Clear();
+            } else {
+              unbacked_bitmap = GetBitmap(arg.unbacked_bitmap_val);
+              swapped_bitmap = GetBitmap(arg.swapped_bitmap_val);
+            }
+          } else if constexpr (std::is_same_v<T, ToggleCollapseSuccess>) {
+            collapse_success = !collapse_success;
+          } else if constexpr (std::is_same_v<T, SetErrorNumber>) {
+            switch (arg.error_type % 4) {
+              case 0:
+                error_number = ENOMEM;
+                break;
+              case 1:
+                error_number = EAGAIN;
+                break;
+              case 2:
+                error_number = EBUSY;
+                break;
+              case 3:
+                error_number = EINVAL;
+                break;
+            }
+          } else if constexpr (std::is_same_v<T, SetCollapseLatency>) {
+            collapse_latency = absl::ToInt64Nanoseconds(arg.latency);
           }
-
-          trackers.push_back(result.pt);
-        }
-
-        // We have now successfully allocated.  Record the alloc and clear any
-        // released bits.
-        for (PageId p = result.page, end = p + n; p != end; ++p) {
-          released_set.erase(p);
-        }
-
-        allocs[result.pt].push_back({{result.page, n}, alloc_info});
-
-        CHECK_EQ(filler.size().raw_num(), trackers.size());
-        CHECK_EQ(filler.unmapped_pages().raw_num(), released_set.size());
-
-        break;
-      }
-      case 1: {
-        // Deallocate.
-        //
-        // value[0:15]  - Index of the huge page (from trackers) to select
-        // value[16:31] - Index of the allocation (on pt) to select
-        if (trackers.empty()) {
-          break;
-        }
-
-        const size_t lo = std::min<size_t>(value & 0xFFFF, trackers.size() - 1);
-        PageTracker* pt = trackers[lo];
-
-        CHECK(!allocs[pt].empty());
-        const size_t hi = std::min<size_t>(value >> 16, allocs[pt].size() - 1);
-        auto [alloc, alloc_info] = allocs[pt][hi];
-
-        // Remove the allocation.
-        std::swap(allocs[pt][hi], allocs[pt].back());
-        allocs[pt].resize(allocs[pt].size() - 1);
-        bool last_alloc = allocs[pt].empty();
-        if (last_alloc) {
-          allocs.erase(pt);
-          std::swap(trackers[lo], trackers.back());
-          trackers.resize(trackers.size() - 1);
-        }
-
-        PageTracker* ret;
-        {
-          PageHeapSpinLockHolder l;
-          ret = filler.Put(pt, alloc, alloc_info);
-        }
-        CHECK_EQ(ret != nullptr, last_alloc);
-        absl::flat_hash_set<PageId>& released_set = ReleasedPages();
-        if (ret) {
-          // Clear released_set, since the page has become free.
-          HugePage hp = ret->location();
-          for (PageId p = hp.first_page(),
-                      end = hp.first_page() + kPagesPerHugePage;
-               p != end; ++p) {
-            released_set.erase(p);
-          }
-          delete ret;
-        }
-
-        CHECK_EQ(filler.size().raw_num(), trackers.size());
-        CHECK_EQ(filler.unmapped_pages().raw_num(), released_set.size());
-
-        break;
-      }
-      case 2: {
-        // Release
-        //
-        // value[0]    - Whether are trying to apply TCMalloc's memory limits
-        // value[1]    - Whether using peak interval for skip subrelease
-        // If using peak interval:
-        // value[2:9]  - Peak interval for skip subrelease
-        // value[10:31]- Number of pages to try to release
-        // If not using peak interval:
-        // value[2:9]  - Short interval for skip subrelease
-        // value[10:17]- Long interval for skip subrelease
-        // value[18:29]- Number of pages to try to release
-        // value[30] - Whether we release all free pages from partial allocs.
-        // value[31] - Reserved.
-        bool hit_limit = value & 0x1;
-        bool use_peak_interval = (value >> 1) & 0x1;
-        SkipSubreleaseIntervals skip_subrelease_intervals;
-        if (use_peak_interval) {
-          const uint32_t peak_interval_s = (value >> 2) & 0xFF;
-          skip_subrelease_intervals.peak_interval =
-              absl::Seconds(peak_interval_s);
-          value >>= 10;
-        } else {
-          uint32_t short_interval_s = (value >> 2) & 0xFF;
-          uint32_t long_interval_s = (value >> 10) & 0xFF;
-          if (short_interval_s > long_interval_s) {
-            std::swap(short_interval_s, long_interval_s);
-          }
-          skip_subrelease_intervals.short_interval =
-              absl::Seconds(short_interval_s);
-          skip_subrelease_intervals.long_interval =
-              absl::Seconds(long_interval_s);
-          value >>= 18;
-        }
-        Length desired(value & 0xFFF);
-        const bool release_partial_allocs = (value >> 12) & 0x1;
-        size_t to_release_from_partial_allocs;
-
-        Length released;
-        {
-          PageHeapSpinLockHolder l;
-          to_release_from_partial_allocs =
-              HugePageFiller<PageTracker>::kPartialAllocPagesRelease *
-              filler.FreePagesInPartialAllocs().raw_num();
-          released = filler.ReleasePages(desired, skip_subrelease_intervals,
-                                         release_partial_allocs, hit_limit);
-        }
-
-        // We should be able to release all the free pages in partial allocs if
-        // skip-subrelease is disabled.
-        if (release_partial_allocs && !hit_limit &&
-            !skip_subrelease_intervals.SkipSubreleaseEnabled() &&
-            unback_success) {
-          CHECK_GE(released.raw_num(), to_release_from_partial_allocs);
-        }
-        break;
-      }
-      case 3: {
-        // Advance clock
-        //
-        // value[0:31] - Advances clock by this amount in arbitrary units.
-        fake_clock += value;
-        break;
-      }
-      case 4: {
-        // Toggle unback, simulating madvise potentially failing or succeeding.
-        //
-        // value is unused.
-        unback_success = !unback_success;
-        break;
-      }
-      case 5: {
-        // Gather stats
-        //
-        // value is unused.
-        std::string s;
-        s.resize(1 << 20);
-        Printer p(&s[0], s.size());
-        FakePageFlags pageflags;
-        PageHeapSpinLockHolder l;
-        filler.Print(p, true, pageflags);
-        break;
-      }
-      case 6: {
-        // Model a tail from a larger allocation.  The tail can have any size
-        // [1,kPagesPerHugePage).
-        //
-        // value[0:15]  - We choose a Length to allocate.
-        // value[16:31] - Unused.
-        const Length n(std::clamp<size_t>(value & 0xFFFF, 1,
-                                          kPagesPerHugePage.raw_num() - 1));
-        absl::flat_hash_set<PageId>& released_set = ReleasedPages();
-
-        auto* pt = new PageTracker(HugePage{.pn = next_hugepage},
-                                   /*was_donated=*/true, fake_clock);
-        next_hugepage++;
-        PageId start;
-        {
-          PageHeapSpinLockHolder l;
-
-          start = pt->Get(n, {1, AccessDensityPrediction::kSparse}).page;
-          filler.Contribute(pt, /*donated=*/true,
-                            {1, AccessDensityPrediction::kSparse});
-        }
-
-        trackers.push_back(pt);
-
-        // We have now successfully allocated.  Record the alloc and clear any
-        // released bits.
-        for (PageId p = start, end = p + n; p != end; ++p) {
-          released_set.erase(p);
-        }
-
-        allocs[pt].push_back(
-            {{start, n}, {1, AccessDensityPrediction::kSparse}});
-
-        CHECK_EQ(filler.size().raw_num(), trackers.size());
-        CHECK_EQ(filler.unmapped_pages().raw_num(), released_set.size());
-        break;
-      }
-      case 7: {
-        // Memory limit hit. Release.
-        //
-        // value[0:15]- Number of pages to try to release
-        Length desired(value & 0xFF);
-
-        Length released;
-        const Length free = filler.free_pages();
-        {
-          PageHeapSpinLockHolder l;
-          released = filler.ReleasePages(desired, SkipSubreleaseIntervals{},
-                                         /*release_partial_alloc_pages=*/false,
-                                         /*hit_limit=*/true);
-        }
-        const Length expected =
-            unback_success ? std::min(free, desired) : Length(0);
-        CHECK_GE(released.raw_num(), expected.raw_num());
-        break;
-      }
-      case 8: {
-        // Gather stats in pbtxt format.
-        //
-        // value is unused.
-        std::string s;
-        s.resize(1 << 20);
-        Printer p(&s[0], s.size());
-        FakePageFlags pageflags;
-        {
-          PbtxtRegion region(p, kTop);
-          PageHeapSpinLockHolder l;
-          filler.PrintInPbtxt(region, pageflags);
-        }
-
-        CHECK_LE(p.SpaceRequired(), s.size());
-        s.resize(p.SpaceRequired());
-        break;
-      }
-      case 9: {
-        // Gather span stats.
-        //
-        // value populates ages' now argument.
-        SmallSpanStats small;
-        LargeSpanStats large;
-        filler.AddSpanStats(&small, &large);
-        break;
-      }
-      case 10: {
-        FakePageFlags pageflags;
-        FakeResidency residency;
-        bool enable_collapse = value & 0x1;
-        bool enable_release_free_swap = (value >> 1) & 0x1;
-        bool use_userspace_collapse_heuristics = (value >> 2) & 0x1;
-        EnableUnfilteredCollapse enable_unfiltered_collapse =
-            (value >> 3) & 0x1 ? EnableUnfilteredCollapse::kEnabled
-                               : EnableUnfilteredCollapse::kDisabled;
-        PageHeapSpinLockHolder l;
-        filler.TreatHugepageTrackers(enable_collapse, enable_release_free_swap,
-                                     use_userspace_collapse_heuristics,
-                                     enable_unfiltered_collapse, &pageflags,
-                                     &residency);
-        CHECK(filler.FetchFullyFreedTracker() == nullptr);
-        break;
-      }
-      case 11: {
-        if (value & 0x2) {
-          is_hugepage_backed = value & 0x1;
-        } else {
-          is_hugepage_backed = std::nullopt;
-        }
-        if (is_hugepage_backed.value_or(false)) {
-          unbacked_bitmap.Clear();
-          swapped_bitmap.Clear();
-        } else {
-          value >>= 2;
-          unbacked_bitmap = GetBitmap(value & 0x01FF);
-          value >>= 9;
-          swapped_bitmap = GetBitmap(value & 0x01FF);
-          value >>= 9;
-        }
-        break;
-      }
-      case 12: {
-        // Toggle collapse success.
-        collapse_success = !collapse_success;
-        break;
-      }
-      case 13: {
-        switch (value & 0x3) {
-          case 0: {
-            error_number = ENOMEM;
-            break;
-          }
-          case 1: {
-            error_number = EAGAIN;
-            break;
-          }
-          case 2: {
-            error_number = EBUSY;
-            break;
-          }
-          case 3: {
-            error_number = EINVAL;
-            break;
-          }
-          default: {
-            error_number = (value >> 3);
-            break;
-          }
-        }
-        break;
-      }
-      case 14: {
-        if (value & 0x1) {
-          collapse_latency = 0;
-        } else {
-          collapse_latency = value >> 1;
-        }
-        break;
-      }
-    }
+        },
+        inst);
   }
 
   // Shut down, confirm filler is empty.
@@ -588,15 +617,63 @@ void FuzzFiller(const std::string& s) {
       }
       CHECK_EQ(ret != nullptr, i + 1 == n);
     }
-
     delete pt;
   }
-
   CHECK(filler.size() == NHugePages(0));
 }
 
+auto NonNegativeDurationDomain() {
+  return fuzztest::Map([](int64_t ns) { return absl::Nanoseconds(ns); },
+                       fuzztest::NonNegative<int64_t>());
+}
+
+auto GetInstructionDomain() {
+  return fuzztest::OneOf(
+      fuzztest::Map([](Allocate a) { return Instruction{a}; },
+                    fuzztest::Arbitrary<Allocate>()),
+      fuzztest::Map([](Deallocate d) { return Instruction{d}; },
+                    fuzztest::Arbitrary<Deallocate>()),
+      fuzztest::Map(
+          [](bool hl, bool upi, absl::Duration pi, absl::Duration si,
+             absl::Duration li, uint16_t dp, bool rpa) {
+            return Instruction{Release{hl, upi, pi, si, li, dp, rpa}};
+          },
+          fuzztest::Arbitrary<bool>(), fuzztest::Arbitrary<bool>(),
+          NonNegativeDurationDomain(), NonNegativeDurationDomain(),
+          NonNegativeDurationDomain(), fuzztest::Arbitrary<uint16_t>(),
+          fuzztest::Arbitrary<bool>()),
+      fuzztest::Map(
+          [](absl::Duration d) { return Instruction{AdvanceClock{d}}; },
+          NonNegativeDurationDomain()),
+      fuzztest::Map([](ToggleUnback t) { return Instruction{t}; },
+                    fuzztest::Arbitrary<ToggleUnback>()),
+      fuzztest::Map([](GatherStats g) { return Instruction{g}; },
+                    fuzztest::Arbitrary<GatherStats>()),
+      fuzztest::Map([](ModelTail m) { return Instruction{m}; },
+                    fuzztest::Arbitrary<ModelTail>()),
+      fuzztest::Map([](MemoryLimitHitRelease m) { return Instruction{m}; },
+                    fuzztest::Arbitrary<MemoryLimitHitRelease>()),
+      fuzztest::Map([](GatherStatsPbtxt g) { return Instruction{g}; },
+                    fuzztest::Arbitrary<GatherStatsPbtxt>()),
+      fuzztest::Map([](GatherSpanStats g) { return Instruction{g}; },
+                    fuzztest::Arbitrary<GatherSpanStats>()),
+      fuzztest::Map([](TreatTrackers t) { return Instruction{t}; },
+                    fuzztest::Arbitrary<TreatTrackers>()),
+      fuzztest::Map([](UpdateBitmaps u) { return Instruction{u}; },
+                    fuzztest::Arbitrary<UpdateBitmaps>()),
+      fuzztest::Map([](ToggleCollapseSuccess t) { return Instruction{t}; },
+                    fuzztest::Arbitrary<ToggleCollapseSuccess>()),
+      fuzztest::Map([](SetErrorNumber s) { return Instruction{s}; },
+                    fuzztest::Arbitrary<SetErrorNumber>()),
+      fuzztest::Map(
+          [](absl::Duration d) { return Instruction{SetCollapseLatency{d}}; },
+          NonNegativeDurationDomain()));
+}
+
 FUZZ_TEST(HugePageFillerTest, FuzzFiller)
-    ;
+    .WithDomains(fuzztest::VectorOf(GetInstructionDomain()).WithMaxSize(20000));
+
+TEST(HugePageFillerTest, FuzzFillerRegression) { FuzzFiller({}); }
 
 }  // namespace
 }  // namespace tcmalloc::tcmalloc_internal

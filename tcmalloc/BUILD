@@ -771,9 +771,10 @@ cc_test(
 cc_test(
     name = "huge_page_filler_fuzz",
     srcs = ["huge_page_filler_fuzz.cc"],
-    args = ["--fuzztest_stack_limit_kb=2048"],
+    args = [
+        "--fuzztest_stack_limit_kb=2048",
+    ],
     copts = TCMALLOC_DEFAULT_COPTS + TCMALLOC_DEFAULT_CXXOPTS,
-    data = glob(["testdata/huge_page_filler_fuzz/*"]),
     deps = [
         ":common_8k_pages",
         "//tcmalloc/internal:allocation_guard",
@@ -789,6 +790,7 @@ cc_test(
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@com_google_fuzztest//fuzztest",
